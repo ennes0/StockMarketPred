@@ -1,0 +1,112 @@
+import numpy as np
+import pandas as pd
+import matplotlib.pyplot as plt
+import yfinance as yf
+from sklearn.preprocessing import MinMaxScaler
+from sklearn.metrics import mean_absolute_error, mean_squared_error
+from sklearn.ensemble import RandomForestRegressor
+from sklearn.model_selection import train_test_split
+from datetime import datetime, timedelta
+
+
+def create_sequences(data, time_step):
+    x, y = [], []
+    for i in range(time_step, len(data)):
+        x.append(data[i - time_step:i])
+        y.append(data[i, 0])  
+    return np.array(x), np.array(y)
+
+
+def predict_next_day_rf(model, data, sequence_length):
+    predictions = []
+    current_data = data[-sequence_length:] 
+    for i in range(24):  
+        x = current_data.flatten().reshape(1, -1)
+        prediction = model.predict(x)
+        predictions.append(prediction[0])
+        current_data = np.vstack((current_data[1:], np.append(current_data[-1, 1:], prediction).reshape(1, -1)))
+    return predictions
+
+
+symbol = 'BTC-USD' 
+data = yf.download(symbol, start='2024-01-01', end=datetime.today().strftime('%Y-%m-%d'), interval='1h')
+data = data[['Adj Close']]
+
+
+adj_close_scaler = MinMaxScaler(feature_range=(0, 1))
+data[['Adj Close']] = adj_close_scaler.fit_transform(data[['Adj Close']])
+scaled_data = data.values
+
+
+time_step = 1200  
+
+
+x, y = create_sequences(scaled_data, time_step)
+
+
+x_train, x_test, y_train, y_test = train_test_split(x, y, test_size=0.2, random_state=42)
+
+
+x_train = x_train.reshape((x_train.shape[0], -1))
+x_test = x_test.reshape((x_test.shape[0], -1))
+
+
+rf_model = RandomForestRegressor(
+    n_estimators=500,      
+    max_depth=10,           
+    max_features='sqrt',    
+    n_jobs=-1,              
+    random_state=42,        
+    min_samples_split=5
+)
+
+rf_model.fit(x_train, y_train)
+
+
+predictions = predict_next_day_rf(rf_model, scaled_data, time_step)
+
+
+predictions = adj_close_scaler.inverse_transform(np.array(predictions).reshape(-1, 1))
+
+
+prediction_dates = pd.date_range(start=data.index[-1] + timedelta(hours=1), periods=24, freq='H')
+prediction_series = pd.Series(predictions.flatten(), index=prediction_dates)
+
+
+plt.figure(figsize=(14, 7))
+plt.plot(data.index[-30*24:], adj_close_scaler.inverse_transform(data['Adj Close'].values[-30*24:].reshape(-1, 1)), label='Historical Prices (Last 30 Days)')
+plt.plot(prediction_series.index, prediction_series.values, label='Predicted Prices', color='red')
+plt.axvline(data.index[-1], color='gray', linestyle='--')  
+plt.xlabel('Date')
+plt.ylabel('Price')
+plt.title(f'{symbol} Price Prediction - Last 30 Days')
+plt.legend()
+plt.gcf().autofmt_xdate()
+plt.show()
+
+
+plt.figure(figsize=(14, 7))
+plt.plot(data.index[-24:], adj_close_scaler.inverse_transform(data['Adj Close'].values[-24:].reshape(-1, 1)), label='Historical Prices (Last 24 Hours)')
+plt.plot(prediction_series.index, prediction_series.values, label='Predicted Prices', color='red')
+plt.axvline(data.index[-1], color='gray', linestyle='--')  
+plt.xlabel('Date')
+plt.ylabel('Price')
+plt.title(f'{symbol} Price Prediction - Last 24 Hours')
+plt.legend()
+plt.gcf().autofmt_xdate()
+plt.show()
+
+
+y_test_pred = rf_model.predict(x_test)
+y_test_pred = adj_close_scaler.inverse_transform(y_test_pred.reshape(-1, 1))
+y_test_actual = adj_close_scaler.inverse_transform(y_test.reshape(-1, 1))
+
+mae = mean_absolute_error(y_test_actual, y_test_pred)
+mse = mean_squared_error(y_test_actual, y_test_pred)
+print(f'Mean Absolute Error: {mae}')
+print(f'Mean Squared Error: {mse}')
+
+
+print("Next day predictions (in hours):")
+for i, pred in enumerate(predictions):
+    print(f"Hour {i+1}: {pred[0]:.2f}")
