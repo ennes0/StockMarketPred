@@ -1,0 +1,63 @@
+import requests
+from bs4 import BeautifulSoup
+import google.generativeai as genai # type: ignore
+
+def to_plain_text(text):
+    text = text.replace('**', '')  
+    text = text.replace('*', '')   
+    text = text.replace('>', '')  
+    return text.strip() 
+
+def fetch_latest_reddit_news():
+    url = "https://www.reddit.com/r/CryptoCurrency/new/"
+    headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/58.0.3029.110 Safari/537.3'}
+    response = requests.get(url, headers=headers)
+    
+    if response.status_code == 200:
+        soup = BeautifulSoup(response.content, 'html.parser')
+        posts = soup.find_all('a', slot='full-post-link')
+        if posts and len(posts) >= 3:
+            news_articles = []
+            for post in posts[:3]:  
+                title = post.find('faceplate-screen-reader-content').text
+                post_url = "https://www.reddit.com" + post['href']
+                content = fetch_post_content(post_url)
+                news_articles.append(title + "\n\n" + content)
+            return "\n\n".join(news_articles)
+        else:
+            raise Exception("Not enough posts found on the specified Reddit page")
+    else:
+        raise Exception("Failed to fetch news from Reddit")
+
+def fetch_post_content(post_url):
+    headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/58.0.3029.110 Safari/537.3'}
+    response = requests.get(post_url, headers=headers)
+    
+    if response.status_code == 200:
+        soup = BeautifulSoup(response.content, 'html.parser')
+        content = soup.find('div', class_='_1qeIAgB0cPwnLhDF9XSiJM')
+        return content.text if content else ""
+    else:
+        raise Exception("Failed to fetch post content from Reddit")
+
+
+GOOGLE_API_KEY = ''  
+
+genai.configure(api_key=GOOGLE_API_KEY)
+
+model = genai.GenerativeModel('gemini-1.5-flash')
+
+def analyze_news():
+    latest_news = fetch_latest_reddit_news()
+    print(f"Latest news:\n{latest_news}\n")
+    response = model.generate_content(f"Based on the following news headlines, what is the current situation of the cryptocurrency market in terms of news? I will handle the other concepts like price movements by myself, just evaluate the news' headlines\n\n{latest_news}")
+  
+    text_response = response.candidates[0].content.parts[0].text
+    return to_plain_text(text_response)
+
+if __name__ == "__main__":
+    try:
+        analysis_result = analyze_news()
+        print(analysis_result)
+    except Exception as e:
+        print(f"Error: {e}")
